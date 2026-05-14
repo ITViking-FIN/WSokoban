@@ -132,29 +132,37 @@ def _eyes(base, direction):
     left_rect.center  = (5, TILE // 2)
     right_rect = pygame.Rect(0, 0, eye_w, eye_h)
     right_rect.center = (14, TILE // 2)
-    # Tight 2-pixel corner radius — at radius 3 the rounded top spanned 3
-    # rows where the white rim was narrower than a circle-radius-3 pupil
-    # placed at the top, so the pupil drew onto the corner background and
-    # made UP/DOWN read as solid blobs at the edge.
-    radius = 2
+    # Restored to a properly-rounded pill — bigger corner radius that gives
+    # an elliptical look top and bottom. The pupil bleed problem is solved
+    # by per-eye SRCALPHA masking below rather than by squaring off the
+    # corners.
+    radius = 5
+
+    # Build a reusable shape mask: opaque rounded-rect, transparent at
+    # the rounded-corner background. We'll multiply the pupil's alpha
+    # against this so pupil pixels can't draw outside the eye outline.
+    mask = pygame.Surface((eye_w, eye_h), pygame.SRCALPHA)
+    pygame.draw.rect(mask, (255, 255, 255, 255),
+                     mask.get_rect(), border_radius=radius)
 
     # 1. White pill fills
     for r in (left_rect, right_rect):
         pygame.draw.rect(s, EYE_WHITE, r, border_radius=radius)
 
-    # 2. Pupils — drawn as a 7x7 ellipse (symmetric — pygame.draw.circle at
-    # radius 3 is biased upward by half a pixel and made UP look heavier
-    # than DOWN). Pushed past the eye edge in the direction of motion so
-    # the per-eye clip flattens 1 row/column off the leading side.
+    # 2. Pupils — 7x7 ellipse (symmetric, unlike pygame.draw.circle at
+    # small radii). Drawn on a per-eye temp surface and alpha-multiplied
+    # by the eye-shape mask so the pupil always reads as bounded by the
+    # rim, even when pushed all the way to the edge.
     pdx = 2 if dx > 0 else (-2 if dx < 0 else 0)
     pdy = 5 if dy > 0 else (-5 if dy < 0 else 0)
-    saved_clip = s.get_clip()
+    cx_local, cy_local = eye_w // 2, eye_h // 2
     for r in (left_rect, right_rect):
-        cx, cy = r.center
-        s.set_clip(r)
-        pygame.draw.ellipse(s, EYE_BLACK,
-                            pygame.Rect(cx + pdx - 3, cy + pdy - 3, 7, 7))
-    s.set_clip(saved_clip)
+        pupil = pygame.Surface((eye_w, eye_h), pygame.SRCALPHA)
+        pygame.draw.ellipse(pupil, EYE_BLACK,
+                            pygame.Rect(cx_local + pdx - 3,
+                                        cy_local + pdy - 3, 7, 7))
+        pupil.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        s.blit(pupil, r.topleft)
 
     # 3. Clean 1-pixel outline tracing the same pill shape exactly
     # (same rect, same radius) — no fuzzy edge mismatch.
