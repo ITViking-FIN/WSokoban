@@ -116,38 +116,68 @@ def _moneybag(base):
 
 
 def _eyes(base, direction):
-    """Draw a pair of vertical-oval eyes filling most of the tile,
-    pupils shifted toward direction of motion."""
+    """Cartoon emoji-style eyes — pill-shaped whites with clean black
+    outlines, big pupils that travel all the way to the eye edge in the
+    direction of motion, and a catchlight on the *opposite* side of each
+    pupil from where it's looking (so it reads as a fixed reflection of
+    light from above-left rather than tracking the pupil)."""
     s = base.copy()
     dx, dy = direction
-    # Two oval eyes side by side, filling most of the 20x20 tile
     eye_w, eye_h = 9, 14
     left_rect  = pygame.Rect(0, 0, eye_w, eye_h)
     left_rect.center  = (5, TILE // 2)
     right_rect = pygame.Rect(0, 0, eye_w, eye_h)
     right_rect.center = (14, TILE // 2)
-    # Capsule/pill shape: round top + bottom corners, flat vertical sides.
-    # Using draw.rect with a corner radius gives flatter sides than the
-    # full ellipse the previous version drew.
-    radius = 4
-    for r in (left_rect, right_rect):
-        pygame.draw.rect(s, EYE_OUTLINE, r.inflate(2, 2),
-                         border_radius=radius + 1)
+    # Smaller corner radius keeps the eye nearly-rectangular at the top/
+    # bottom rows so a pupil pushed all the way down/up doesn't poke past
+    # the white into the corner background.
+    radius = 3
+
+    # 1. White pill fills
     for r in (left_rect, right_rect):
         pygame.draw.rect(s, EYE_WHITE, r, border_radius=radius)
-    # Black separator down the middle so the two whites read as distinct eyes
+
+    # 2. Pupils — pushed to the eye edge in the direction of motion.
+    # Clipped per-eye so a pupil at the extreme can't bleed onto the
+    # background outside the eye.
+    pdx = 2 if dx > 0 else (-2 if dx < 0 else 0)
+    pdy = 4 if dy > 0 else (-4 if dy < 0 else 0)
+    saved_clip = s.get_clip()
+    for r in (left_rect, right_rect):
+        cx, cy = r.center
+        s.set_clip(r)
+        pygame.draw.circle(s, EYE_BLACK, (cx + pdx, cy + pdy), 3)
+    s.set_clip(saved_clip)
+
+    # 3. Clean 1-pixel outline tracing the same pill shape exactly
+    # (same rect, same radius) — no fuzzy edge mismatch.
+    for r in (left_rect, right_rect):
+        pygame.draw.rect(s, EYE_OUTLINE, r, width=1, border_radius=radius)
+
+    # 4. Black separator between the two whites
     s.fill(EYE_OUTLINE, (9, 4, 2, 12))
-    # Pupils: large filled circles like the 👀 emoji — pupil takes most of
-    # the eye, leaving only a thin white ring. A small white catchlight in
-    # the upper-left of the pupil sells the glossy look.
-    pdx = 1 if dx > 0 else (-1 if dx < 0 else 0)
-    pdy = 3 if dy > 0 else (-3 if dy < 0 else 0)
+
+    # 5. Catchlight — 2x2 white, on the *opposite* side of the pupil from
+    # the direction it's looking. So when the pupil sits at the bottom of
+    # the eye, the catchlight is at the top of the pupil; when the pupil
+    # is to the right, the catchlight is on its left side; etc.
     for r in (left_rect, right_rect):
         cx, cy = r.center
         px, py = cx + pdx, cy + pdy
-        pygame.draw.circle(s, EYE_BLACK, (px, py), 3)
-        # Catchlight: 2x2 white pixel cluster, upper-left of pupil
-        s.fill(EYE_WHITE, (px - 2, py - 2, 2, 2))
+        if pdx > 0:
+            hx = px - 2          # looking right → highlight on left of pupil
+        elif pdx < 0:
+            hx = px + 1          # looking left → highlight on right
+        else:
+            hx = px - 1          # idle horizontally → centered
+        if pdy > 0:
+            hy = py - 2          # looking down → highlight on top
+        elif pdy < 0:
+            hy = py + 1          # looking up → highlight on bottom
+        else:
+            hy = py - 1          # idle vertically → centered
+        s.fill(EYE_WHITE, (hx, hy, 2, 2))
+
     return s
 
 
