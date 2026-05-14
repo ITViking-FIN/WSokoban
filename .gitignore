@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# PyInstaller build outputs
+build/
+dist/
+*.spec.bak
+
+# Local build tool — UPX is GPL, we don't redistribute it.
+# Download from https://upx.github.io and place alongside build.cmd.
+upx.exe
+
+# Claude Code internals — never publish these.
+.claude/
+*.jsonl
+.anthropic/
+CLAUDE.md
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local player state (created at runtime next to the .exe / script)
+WSokoban.data
+WSokoban.scores
+WSokoban.settings
+
+# Scratch from sound tuning — Pixabay reference is not redistributable.
+reference.mp3
+preview_variant_*.wav
+*.tmp
+*.log
