@@ -123,30 +123,37 @@ def _eyes(base, direction):
     light from above-left rather than tracking the pupil)."""
     s = base.copy()
     dx, dy = direction
-    eye_w, eye_h = 9, 14
+    # Eye dimensions: ODD height matters so the rect has a single true
+    # centre row. With eye_h=14 the centre lands between two rows, which
+    # made symmetric pdy values (±N) clip on one side and not the other —
+    # UP showed a full-circle pupil while DOWN showed a flat-bottom one.
+    eye_w, eye_h = 9, 15
     left_rect  = pygame.Rect(0, 0, eye_w, eye_h)
     left_rect.center  = (5, TILE // 2)
     right_rect = pygame.Rect(0, 0, eye_w, eye_h)
     right_rect.center = (14, TILE // 2)
-    # Smaller corner radius keeps the eye nearly-rectangular at the top/
-    # bottom rows so a pupil pushed all the way down/up doesn't poke past
-    # the white into the corner background.
-    radius = 3
+    # Tight 2-pixel corner radius — at radius 3 the rounded top spanned 3
+    # rows where the white rim was narrower than a circle-radius-3 pupil
+    # placed at the top, so the pupil drew onto the corner background and
+    # made UP/DOWN read as solid blobs at the edge.
+    radius = 2
 
     # 1. White pill fills
     for r in (left_rect, right_rect):
         pygame.draw.rect(s, EYE_WHITE, r, border_radius=radius)
 
-    # 2. Pupils — pushed to the eye edge in the direction of motion.
-    # Clipped per-eye so a pupil at the extreme can't bleed onto the
-    # background outside the eye.
+    # 2. Pupils — drawn as a 7x7 ellipse (symmetric — pygame.draw.circle at
+    # radius 3 is biased upward by half a pixel and made UP look heavier
+    # than DOWN). Pushed past the eye edge in the direction of motion so
+    # the per-eye clip flattens 1 row/column off the leading side.
     pdx = 2 if dx > 0 else (-2 if dx < 0 else 0)
-    pdy = 4 if dy > 0 else (-4 if dy < 0 else 0)
+    pdy = 5 if dy > 0 else (-5 if dy < 0 else 0)
     saved_clip = s.get_clip()
     for r in (left_rect, right_rect):
         cx, cy = r.center
         s.set_clip(r)
-        pygame.draw.circle(s, EYE_BLACK, (cx + pdx, cy + pdy), 3)
+        pygame.draw.ellipse(s, EYE_BLACK,
+                            pygame.Rect(cx + pdx - 3, cy + pdy - 3, 7, 7))
     s.set_clip(saved_clip)
 
     # 3. Clean 1-pixel outline tracing the same pill shape exactly
@@ -155,7 +162,7 @@ def _eyes(base, direction):
         pygame.draw.rect(s, EYE_OUTLINE, r, width=1, border_radius=radius)
 
     # 4. Black separator between the two whites
-    s.fill(EYE_OUTLINE, (9, 4, 2, 12))
+    s.fill(EYE_OUTLINE, (9, 4, 2, 13))
 
     # 5. Catchlight — 2x2 white, on the *opposite* side of the pupil from
     # the direction it's looking. So when the pupil sits at the bottom of
