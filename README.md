@@ -233,6 +233,43 @@ one):
 python extract_icon.py path/to/ASokoban.info
 ```
 
+## Releasing
+
+Cutting a new version is automated by
+[`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+1. Bump `VERSION` in `main.py`.
+2. Commit and push.
+3. Tag and push: `git tag v1.x.y && git push --tags`.
+
+The workflow runs on a Windows runner: builds the .exe with PyInstaller
+and UPX, optionally signs it via SignPath (see *Code signing* below),
+publishes a GitHub release with the .exe attached, and includes the
+SHA-256 in the release notes.
+
+## Code signing
+
+Releases are signed via [SignPath](https://about.signpath.io/) under
+their free Foundation tier for open-source projects. Once approved,
+the workflow signs every release automatically — no warning when
+SmartScreen is consulted, and no UPX/PyInstaller false positives.
+
+### Enabling signing in this repo
+
+Until SignPath approves the project, the workflow still produces an
+unsigned .exe — the signing step skips when its secrets are missing.
+After approval:
+
+1. In SignPath's dashboard, create a signing policy
+   (e.g. `release-signing`) and an API token.
+2. In GitHub → *Settings → Secrets and variables → Actions*, add four
+   secrets:
+   - `SIGNPATH_API_TOKEN`
+   - `SIGNPATH_ORG_ID`
+   - `SIGNPATH_PROJECT_SLUG`
+   - `SIGNPATH_POLICY_SLUG`
+3. The next tag push produces a signed release.
+
 ## Credits
 
 - **Sokoban** — Hiroyuki Imabayashi / Thinking Rabbit, 1981.
