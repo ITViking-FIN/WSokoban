@@ -156,10 +156,11 @@ def draw_stats_panel(surf, rect, lines):
 
 # ---- Text field ----------------------------------------------------------
 class TextField:
-    def __init__(self, rect, value=''):
+    def __init__(self, rect, value='', max_length=64):
         self.rect = pygame.Rect(rect)
         self.value = value
         self.focused = False
+        self.max_length = max_length
 
     def draw(self, surf, fnt):
         pygame.draw.rect(surf, HILITE, self.rect)
@@ -168,9 +169,14 @@ class TextField:
         clip = surf.get_clip()
         inner = self.rect.inflate(-6, -4)
         surf.set_clip(inner)
-        surf.blit(ts, (inner.x, inner.y + (inner.h - ts.get_height()) // 2))
+        # If the text is wider than the field, scroll so the right side
+        # (the caret) stays visible — needed for long pasted strings.
+        x = inner.x
+        if ts.get_width() > inner.w:
+            x = inner.x + inner.w - ts.get_width() - 1
+        surf.blit(ts, (x, inner.y + (inner.h - ts.get_height()) // 2))
         if self.focused:
-            cx = inner.x + ts.get_width() + 1
+            cx = min(inner.right - 1, x + ts.get_width() + 1)
             pygame.draw.line(surf, TEXT,
                              (cx, inner.y + 2),
                              (cx, inner.y + inner.h - 3))
@@ -180,9 +186,28 @@ class TextField:
         return self.rect.collidepoint(pos)
 
     def handle_key(self, event):
+        # Ctrl+V paste — pull text from the Windows clipboard.
+        if event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
+            # Local import keeps filepicker.py optional during testing.
+            import filepicker
+            pasted = filepicker.get_clipboard_text()
+            if pasted:
+                # Single-line field: strip newlines, drop non-printables.
+                pasted = pasted.replace('\r', '').replace('\n', ' ')
+                pasted = ''.join(c for c in pasted if c.isprintable())
+                room = self.max_length - len(self.value)
+                if room > 0:
+                    self.value += pasted[:room]
+            return
         if event.key == pygame.K_BACKSPACE:
             self.value = self.value[:-1]
-        elif event.unicode and event.unicode.isprintable() and len(self.value) < 64:
+            return
+        # Ignore other control combos (Ctrl+A/X/C/…) — event.unicode for
+        # those is the control char (\x01 etc.), which isprintable() rejects.
+        if event.mod & pygame.KMOD_CTRL:
+            return
+        if (event.unicode and event.unicode.isprintable()
+                and len(self.value) < self.max_length):
             self.value += event.unicode
 
 

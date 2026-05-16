@@ -20,7 +20,7 @@ from sprites import BG, HILITE, SHADOW, TEXT
 from ui import (WIN_W, WIN_H, PLAY_RECT, PANEL_RECT, ROW_RECT, TILE,
                 BTN_H, font, bevel_in, bevel_out, Viewport)
 
-VERSION = '1.1.2'
+VERSION = '1.1.3'
 
 # ---- Paths ---------------------------------------------------------------
 def _resource_root():
@@ -429,12 +429,16 @@ def message_dialog(surface, viewport, title, lines, buttons=('OK',)):
         clock.tick(60)
 
 
-def input_dialog(surface, viewport, title, prompt, default=''):
-    """Modal with a text input. Returns the string or None on cancel."""
+def input_dialog(surface, viewport, title, prompt, default='',
+                 max_length=64):
+    """Modal with a text input. Returns the string or None on cancel.
+    `max_length` caps the field content — bump it for inputs like API
+    keys that can be longer than the default filename limit."""
     fnt = font('arial', 11, bold=True)
     rect = dialog_rect(260, 100)
     field = ui.TextField(pygame.Rect(rect.x + 16, rect.y + 42,
-                                     rect.w - 32, 18), default)
+                                     rect.w - 32, 18),
+                         default, max_length=max_length)
     field.focused = True
     btn_w = 60
     ok = pygame.Rect(rect.right - btn_w * 2 - 14, rect.bottom - BTN_H - 8,
@@ -991,7 +995,8 @@ def main():
             if not api_key:
                 key = input_dialog(
                     surface, viewport, 'letslogic.com API key',
-                    'Paste your API key (Member Preferences):', '')
+                    'Paste (Ctrl+V) your API key:', '',
+                    max_length=128)
                 if not key:
                     return
                 api_key = key.strip()

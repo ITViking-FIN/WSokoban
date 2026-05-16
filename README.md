@@ -73,8 +73,8 @@ letslogic account. One-time setup, takes about a minute:
    clipboard.
 4. **In WSokoban,** click **Load Level Pack** in the right panel and
    then **letslogic.com…** in the dialog that appears.
-5. **Paste the API key** when prompted. WSokoban stores it locally so
-   you only do this once.
+5. **Paste the API key** when prompted (Ctrl+V works in the text
+   field). WSokoban stores it locally so you only do this once.
 6. The collection browser opens — scroll, pick one, click
    **Download**. It installs as a new pack and WSokoban switches to it
    immediately.
