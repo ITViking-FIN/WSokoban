@@ -40,12 +40,12 @@ SOKOBAN_CHARS = set('#$.@+* \t')
 # Tile mappings for digit-encoded level data. Add new entries here when
 # another source uses a different convention.
 #
-# letslogic.com / Sokoban Online: 0=floor, 1=wall, 2=player, 3=goal,
-#                                  4=box, 5=box-on-goal, 6=player-on-goal,
+# letslogic.com / Sokoban Online: 0=floor, 1=wall, 2=player, 3=box,
+#                                  4=goal, 5=box-on-goal, 6=player-on-goal,
 #                                  7=outside (treat as floor).
 LETSLOGIC_TILES = {
-    '0': ' ', '1': '#', '2': '@', '3': '.',
-    '4': '$', '5': '*', '6': '+', '7': ' ',
+    '0': ' ', '1': '#', '2': '@', '3': '$',
+    '4': '.', '5': '*', '6': '+', '7': ' ',
 }
 
 _SAFE_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

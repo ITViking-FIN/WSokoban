@@ -20,7 +20,7 @@ from sprites import BG, HILITE, SHADOW, TEXT
 from ui import (WIN_W, WIN_H, PLAY_RECT, PANEL_RECT, ROW_RECT, TILE,
                 BTN_H, font, bevel_in, bevel_out, Viewport)
 
-VERSION = '1.1.3'
+VERSION = '1.1.4'
 
 # ---- Paths ---------------------------------------------------------------
 def _resource_root():
