@@ -19,9 +19,18 @@ additional level collections from a file (`.sok`, `.xsb`, `.slc`,
 
 ## Download
 
-See the [Releases](../../releases) page for the latest `WSokoban.exe`. Drop
-it anywhere; it runs in place. Save state and high scores write to the
-folder it's in.
+See the [Releases](https://github.com/ITViking-FIN/WSokoban/releases)
+page for the latest `WSokoban.exe`. Drop it anywhere; it runs in
+place. Save state and high scores write to the folder it's in.
+
+Each release also publishes the **SHA-256** of the binary in its
+release notes — verify with `Get-FileHash .\WSokoban.exe -Algorithm
+SHA256` before running, if you like.
+
+> Free code signing for WSokoban is provided by
+> [SignPath.io](https://signpath.io/), and the code-signing
+> certificate is generously donated by the
+> [SignPath Foundation](https://signpath.org/).
 
 ## Controls
 
@@ -249,10 +258,14 @@ SHA-256 in the release notes.
 
 ## Code signing
 
-Releases are signed via [SignPath](https://about.signpath.io/) under
-their free Foundation tier for open-source projects. Once approved,
-the workflow signs every release automatically — no warning when
-SmartScreen is consulted, and no UPX/PyInstaller false positives.
+Free code signing for WSokoban is provided by
+[SignPath.io](https://signpath.io/), and the code-signing certificate
+is generously donated by the
+[SignPath Foundation](https://signpath.org/) under their free tier
+for open-source projects. Once the project is enrolled, the release
+workflow signs every published `WSokoban.exe` automatically — that
+means no SmartScreen warning, and no UPX/PyInstaller heuristic false
+positives.
 
 ### Enabling signing in this repo
 

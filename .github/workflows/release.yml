@@ -141,3 +141,10 @@ jobs:
             ```powershell
             Get-FileHash .\WSokoban.exe -Algorithm SHA256
             ```
+
+            ---
+
+            > Free code signing for WSokoban is provided by
+            > [SignPath.io](https://signpath.io/), and the code-signing
+            > certificate is generously donated by the
+            > [SignPath Foundation](https://signpath.org/).
