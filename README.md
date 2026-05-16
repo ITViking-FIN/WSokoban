@@ -46,17 +46,80 @@ extra level collections.
 - **Load Level Pack** button — two ways to add packs:
   - **From file…** — open any `.sok` / `.xsb` / `.txt` Sokoban level
     file (sokobano.de, github.com, ksokoban, etc.). Multi-level files
-    parsed automatically, level titles preserved.
-  - **letslogic.com…** — paste your API key (one-time, from your
-    [member preferences](https://www.letslogic.com)) and pick from
-    670+ collections / 54,000 levels. The chosen collection downloads
-    as a pack.
+    are parsed automatically and level titles preserved.
+  - **letslogic.com…** — see the next section for one-time setup.
 - **Now Playing: \<name\>** button — click to switch between any
   installed pack. Set Level, scores, and save state are scoped to the
   active pack.
 
 Installed packs live in `packs/<pack name>/` next to the exe — copy
-them between machines freely.
+them between machines freely. Each pack is just a directory of
+`screen.1`, `screen.2`, … files plus a small `pack.json` with metadata.
+
+## Using letslogic.com (54,000+ levels)
+
+[letslogic.com](https://www.letslogic.com) hosts over 54,000 Sokoban
+levels across 670+ collections, free for personal use. WSokoban can
+browse and download them directly, but it needs an API key tied to a
+letslogic account. One-time setup, takes about a minute:
+
+1. **Create a free account** at <https://www.letslogic.com>
+   (*Register / Login* link, top of the page).
+2. **Confirm your email**, then sign in.
+3. **Find your API key.** With the account dropdown in the top right,
+   open your **Member Preferences** page. The key is a long
+   alphanumeric string near the bottom of that page — copy it to the
+   clipboard.
+4. **In WSokoban,** click **Load Level Pack** in the right panel and
+   then **letslogic.com…** in the dialog that appears.
+5. **Paste the API key** when prompted. WSokoban stores it locally so
+   you only do this once.
+6. The collection browser opens — scroll, pick one, click
+   **Download**. It installs as a new pack and WSokoban switches to it
+   immediately.
+
+After the first time, clicking **letslogic.com…** goes straight to the
+collection browser — no key prompt.
+
+### Where the key is stored
+
+The key lives in plain-text JSON in `WSokoban.settings` next to the
+exe:
+
+```json
+{
+  "sound": true,
+  "current_pack": "Original",
+  "letslogic_api_key": "your-key-here"
+}
+```
+
+**To change or remove the key**, close WSokoban and either:
+- edit `WSokoban.settings` and replace the key value, or
+- delete `WSokoban.settings` entirely (sound preference and current
+  pack reset to defaults; high scores in `WSokoban.scores` are
+  untouched).
+
+The next time you click **letslogic.com…**, the key prompt reappears.
+
+### What WSokoban sends to letslogic
+
+WSokoban uses your key only for two read-only POST requests:
+- `/api/v1/collections` — to list available collections
+- `/api/v1/collection/<id>` — to download a chosen collection's levels
+
+It never submits solutions, scores, or any other data.
+
+### Troubleshooting
+
+- *"Could not reach letslogic.com"* — network or firewall problem.
+  WSokoban talks to `https://letslogic.com/api/v1/...` over HTTPS.
+- *"No collections returned"* — usually means the API key is missing
+  or invalid. Re-check it on your Member Preferences page and update
+  `WSokoban.settings` with the correct value.
+- *"Bad JSON from server"* — letslogic returned an error page (often
+  HTML) instead of JSON. Check the message for an HTTP status hint;
+  503 / 502 mean the site is having a moment, try again shortly.
 
 ## Building from source
 
