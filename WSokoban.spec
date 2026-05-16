@@ -19,8 +19,9 @@ a = Analysis(
         # Stdlib modules we don't touch.
         'unittest', 'doctest', 'pdb', 'pydoc',
         'distutils', 'setuptools', 'pip',
-        # XML / web / email modules pygame doesn't need.
-        'xml', 'xmlrpc', 'html', 'http',
+        # XML / unused web modules. Keep `http` — urllib.request uses it
+        # to call letslogic.com.
+        'xml', 'xmlrpc', 'html',
         # IPython / debugger remnants.
         'IPython', 'jedi',
         # Numeric / data modules we don't use.

@@ -31,12 +31,32 @@ folder it's in.
 ## Features
 
 - All 91 levels from the xsokoban distribution
-- Per-level high scores with a "clean run" flag (no Undo used → `*`)
+- Per-pack, per-level high scores with a "clean run" flag (no Undo used → `*`)
 - Confetti burst on solve
 - Procedurally synthesised footstep sound (no audio files bundled)
 - Resizable window with pixel-perfect integer scaling
 - Setting / state persists across runs (`WSokoban.data`,
   `WSokoban.scores`, `WSokoban.settings` next to the exe)
+
+## Level packs
+
+Beyond the bundled "Original" 91 levels, you can install any number of
+extra level collections.
+
+- **Load Level Pack** button — two ways to add packs:
+  - **From file…** — open any `.sok` / `.xsb` / `.txt` Sokoban level
+    file (sokobano.de, github.com, ksokoban, etc.). Multi-level files
+    parsed automatically, level titles preserved.
+  - **letslogic.com…** — paste your API key (one-time, from your
+    [member preferences](https://www.letslogic.com)) and pick from
+    670+ collections / 54,000 levels. The chosen collection downloads
+    as a pack.
+- **Now Playing: \<name\>** button — click to switch between any
+  installed pack. Set Level, scores, and save state are scoped to the
+  active pack.
+
+Installed packs live in `packs/<pack name>/` next to the exe — copy
+them between machines freely.
 
 ## Building from source
 

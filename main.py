@@ -8,15 +8,19 @@ from pathlib import Path
 
 import pygame
 
+import filepicker
 import game
+import letslogic
+import packs
 import sound
 import sprites
 import ui
+from packs import ORIGINAL_PACK
 from sprites import BG, HILITE, SHADOW, TEXT
 from ui import (WIN_W, WIN_H, PLAY_RECT, PANEL_RECT, ROW_RECT, TILE,
                 BTN_H, font, bevel_in, bevel_out, Viewport)
 
-VERSION = '1.0.3'
+VERSION = '1.1.0'
 
 # ---- Paths ---------------------------------------------------------------
 def _resource_root():
@@ -39,12 +43,11 @@ def _write_root():
 
 ROOT = _write_root()
 RESOURCE_ROOT = _resource_root()
-SCREENS_DIR = RESOURCE_ROOT / 'screens'
+BUILTIN_SCREENS_DIR = RESOURCE_ROOT / 'screens'
+USER_PACKS_DIR = ROOT / 'packs'
 SCORES_PATH = ROOT / 'WSokoban.scores'
 SETTINGS_PATH = ROOT / 'WSokoban.settings'
 DEFAULT_SAVE_NAME = 'WSokoban.data'
-
-NUM_LEVELS = 91
 
 
 # ---- Layout helpers ------------------------------------------------------
@@ -76,6 +79,10 @@ def panel_button_rects():
 
     rects['backup']  = pygame.Rect(x, y, w, BTN_H); y += BTN_H + 4
     rects['restore'] = pygame.Rect(x, y, w, BTN_H); y += BTN_H + 6
+
+    # Level pack section
+    rects['loadpack'] = pygame.Rect(x, y, w, BTN_H); y += BTN_H + 4
+    rects['nowplay']  = pygame.Rect(x, y, w, BTN_H); y += BTN_H + 6
 
     # Sound FX toggle (two stacked buttons, the active one stays highlighted)
     rects['fx_on']  = pygame.Rect(x, y, w, BTN_H); y += BTN_H + 4
@@ -131,8 +138,9 @@ def _apply_snapshot(state, snap):
     state.used_undo = bool(snap.get('used_undo', False))
 
 
-def save_game(state, path):
+def save_game(state, path, pack_name):
     data = {
+        'pack': pack_name,
         'level': state.level,
         'player': list(state.player),
         'direction': list(state.direction),
@@ -155,10 +163,19 @@ def load_game(path):
 
 
 def load_scores():
+    """Scores layout: {pack_name: {level_str: [[moves, pushes, clean], ...]}}.
+    Migrates the pre-1.1 flat format ({level_str: [...]}) into the
+    Original pack on load."""
     try:
-        return json.loads(SCORES_PATH.read_text())
+        raw = json.loads(SCORES_PATH.read_text())
     except (OSError, ValueError):
         return {}
+    if not isinstance(raw, dict):
+        return {}
+    # Pre-1.1 format had str-int keys at the top level. Detect and migrate.
+    if raw and all(k.isdigit() for k in raw.keys()):
+        return {ORIGINAL_PACK: raw}
+    return raw
 
 
 def save_scores(scores):
@@ -176,15 +193,15 @@ def save_settings(settings):
     SETTINGS_PATH.write_text(json.dumps(settings))
 
 
-def record_score(scores, level, moves, pushes, clean):
-    """Record a level completion. `clean` is True when the player solved
-    the level without ever pressing Undo."""
+def record_score(scores, pack_name, level, moves, pushes, clean):
+    """Record a level completion under the given pack."""
+    pack_scores = scores.setdefault(pack_name, {})
     key = str(level)
-    entries = scores.setdefault(key, [])
+    entries = pack_scores.setdefault(key, [])
     entries.append([moves, pushes, 1 if clean else 0])
     # Sort by (moves, pushes); the clean flag is informational, not a tiebreaker.
     entries.sort(key=lambda e: (e[0], e[1]))
-    scores[key] = entries[:5]
+    pack_scores[key] = entries[:5]
     save_scores(scores)
 
 
@@ -198,6 +215,10 @@ class App:
         self.save_filename = DEFAULT_SAVE_NAME
         self.backup = None
         self.state = None
+        self.packs = packs.list_packs(BUILTIN_SCREENS_DIR, USER_PACKS_DIR)
+        wanted = self.settings.get('current_pack', ORIGINAL_PACK)
+        self.current_pack = (packs.find_pack(self.packs, wanted)
+                             or self.packs[0])
         self._init_state()
 
     def set_sound(self, on):
@@ -205,29 +226,54 @@ class App:
         self.settings['sound'] = self.sound_enabled
         save_settings(self.settings)
 
+    def set_current_pack(self, pack):
+        """Switch to a different installed pack. Loads its first level."""
+        self.current_pack = pack
+        self.settings['current_pack'] = pack.name
+        save_settings(self.settings)
+        self.load_level(1)
+
+    def refresh_packs(self, prefer_name=None):
+        """Reload the pack list from disk (after an import). Switches to
+        `prefer_name` if given and present, else keeps current selection."""
+        self.packs = packs.list_packs(BUILTIN_SCREENS_DIR, USER_PACKS_DIR)
+        if prefer_name:
+            target = packs.find_pack(self.packs, prefer_name)
+            if target:
+                self.set_current_pack(target)
+                return
+        # Make sure self.current_pack still exists in the refreshed list
+        if not packs.find_pack(self.packs, self.current_pack.name):
+            self.current_pack = self.packs[0]
+
     def _init_state(self):
-        # Try to resume from default save file
         snap = load_game(safe_save_path(self.save_filename))
-        if snap and 1 <= snap.get('level', 0) <= NUM_LEVELS:
-            self.state = game.load_level(
-                game.screen_path(SCREENS_DIR, snap['level']), snap['level'])
+        # Only resume if the saved pack matches the current pack and the
+        # level number is in range.
+        if (snap and snap.get('pack', ORIGINAL_PACK) == self.current_pack.name
+                and 1 <= snap.get('level', 0) <= self.current_pack.level_count):
+            self.state = self._load_state_for(snap['level'])
             try:
                 _apply_snapshot(self.state, snap)
+                return
             except (KeyError, ValueError, TypeError):
-                self.load_level(1)
-        else:
-            self.load_level(1)
+                pass
+        self.load_level(1)
+
+    def _load_state_for(self, level_num):
+        path = packs.screen_path(self.current_pack, level_num)
+        return game.load_level(path, level_num)
 
     def load_level(self, n):
-        n = max(1, min(NUM_LEVELS, n))
-        self.state = game.load_level(game.screen_path(SCREENS_DIR, n), n)
+        n = max(1, min(self.current_pack.level_count, n))
+        self.state = self._load_state_for(n)
         self.backup = None
 
     def reset_level(self):
         self.load_level(self.state.level)
 
     def next_level(self):
-        if self.state.level < NUM_LEVELS:
+        if self.state.level < self.current_pack.level_count:
             self.load_level(self.state.level + 1)
 
 
@@ -431,7 +477,9 @@ def input_dialog(surface, viewport, title, prompt, default=''):
         clock.tick(60)
 
 
-def high_scores_dialog(surface, viewport, scores):
+def high_scores_dialog(surface, viewport, scores, pack):
+    """Show high scores for `pack` (a packs.PackInfo). `scores` is the
+    full per-pack scores dict — we look up only this pack's entries."""
     fnt = font('consolas', 12, bold=True)
     line_h = fnt.get_linesize()
     rect = dialog_rect(300, 280)
@@ -439,14 +487,16 @@ def high_scores_dialog(surface, viewport, scores):
     btn = pygame.Rect(rect.right - 70, rect.bottom - BTN_H - 8, 60, BTN_H)
 
     # Build the displayed lines. Clean = solved without any Undo (shown as '*').
+    pack_scores = scores.get(pack.name, {})
+    title = f'High Scores — {pack.name}'
     lines = ['Lvl  Moves Pushes  Clean']
-    for n in range(1, NUM_LEVELS + 1):
-        entries = scores.get(str(n))
+    for n in range(1, pack.level_count + 1):
+        entries = pack_scores.get(str(n))
         if not entries:
             continue
         e = entries[0]
         m, p = e[0], e[1]
-        # Backward compat: old entries are 2-tuples and don't have a flag.
+        # Backward compat: pre-1.0.1 entries are 2-tuples (no flag).
         if len(e) >= 3:
             mark = '  *  ' if e[2] else '     '
         else:
@@ -487,7 +537,7 @@ def high_scores_dialog(surface, viewport, scores):
                     scroll = min(scroll + 3, max_scroll)
         surface.blit(snapshot, (0, 0))
         dim_under(surface)
-        ui._draw_dialog_frame(surface, rect, 'High Scores')
+        ui._draw_dialog_frame(surface, rect, title)
         pygame.draw.rect(surface, HILITE, list_rect)
         bevel_in(surface, list_rect)
         clip = surface.get_clip()
@@ -506,6 +556,241 @@ def high_scores_dialog(surface, viewport, scores):
         ts = bf.render('OK', True, TEXT)
         surface.blit(ts, (btn.x + (btn.w - ts.get_width()) // 2,
                           btn.y + (btn.h - ts.get_height()) // 2))
+        viewport.present(surface)
+        clock.tick(60)
+
+
+# ---- Pack-related dialogs -----------------------------------------------
+def pick_pack_dialog(surface, viewport, pack_list, current_name):
+    """Modal list of installed packs. Returns the chosen pack name or None.
+    Used by the 'Now Playing: <name>' button to switch packs."""
+    fnt = font('consolas', 12, bold=True)
+    line_h = fnt.get_linesize()
+    rect = dialog_rect(320, 260)
+    list_rect = pygame.Rect(rect.x + 12, rect.y + 24,
+                            rect.w - 24, rect.h - 60)
+    cancel = pygame.Rect(rect.right - 70, rect.bottom - BTN_H - 8, 60, BTN_H)
+
+    # Each row: pack name + (count) levels
+    rows = [(p.name, f'{p.name}  ({p.level_count})') for p in pack_list]
+    snapshot = surface.copy()
+    clock = pygame.time.Clock()
+    selected = current_name
+    scroll = 0
+    visible_lines = max(1, list_rect.h // line_h)
+    max_scroll = max(0, len(rows) - visible_lines)
+
+    def row_index_at(my):
+        rel = my - list_rect.y - 4
+        if rel < 0:
+            return -1
+        idx = scroll + rel // line_h
+        return idx if 0 <= idx < len(rows) else -1
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            _handle_resize_event(event)
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                if event.key == pygame.K_RETURN:
+                    return selected
+                if event.key == pygame.K_DOWN:
+                    cur = next((i for i, (n, _) in enumerate(rows)
+                                if n == selected), -1)
+                    if cur < len(rows) - 1:
+                        selected = rows[cur + 1][0]
+                if event.key == pygame.K_UP:
+                    cur = next((i for i, (n, _) in enumerate(rows)
+                                if n == selected), -1)
+                    if cur > 0:
+                        selected = rows[cur - 1][0]
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = viewport.to_logical(event.pos)
+                if event.button == 1:
+                    if cancel.collidepoint(mx, my):
+                        return None
+                    idx = row_index_at(my)
+                    if idx >= 0:
+                        if rows[idx][0] == selected:
+                            return selected  # double-effect: click again to confirm
+                        selected = rows[idx][0]
+                if event.button == 4:
+                    scroll = max(0, scroll - 2)
+                if event.button == 5:
+                    scroll = min(max_scroll, scroll + 2)
+
+        surface.blit(snapshot, (0, 0))
+        dim_under(surface)
+        ui._draw_dialog_frame(surface, rect, 'Switch Level Pack')
+        pygame.draw.rect(surface, HILITE, list_rect)
+        bevel_in(surface, list_rect)
+        clip = surface.get_clip()
+        inner = list_rect.inflate(-6, -4)
+        surface.set_clip(inner)
+        y = inner.y - scroll * line_h
+        for i, (name, label) in enumerate(rows):
+            row_r = pygame.Rect(inner.x - 4, y - 1, inner.w + 8, line_h)
+            if name == selected:
+                pygame.draw.rect(surface, (88, 124, 176), row_r)
+                col = (255, 255, 255)
+            else:
+                col = TEXT
+            ts = fnt.render(label, True, col)
+            surface.blit(ts, (inner.x, y))
+            y += line_h
+        surface.set_clip(clip)
+
+        bf = font('arial', 11, bold=True)
+        for r, lbl in [(cancel, 'Cancel')]:
+            pygame.draw.rect(surface, BG, r)
+            bevel_out(surface, r)
+            pygame.draw.rect(surface, SHADOW, r, 1)
+            ts = bf.render(lbl, True, TEXT)
+            surface.blit(ts, (r.x + (r.w - ts.get_width()) // 2,
+                              r.y + (r.h - ts.get_height()) // 2))
+        # Hint
+        hint = font('arial', 10, bold=False).render(
+            'Click a pack to highlight, click again or Enter to confirm.',
+            True, TEXT)
+        surface.blit(hint, (rect.x + 12, rect.bottom - 28))
+        viewport.present(surface)
+        clock.tick(60)
+
+
+def load_pack_dialog(surface, viewport):
+    """Choose how to add a pack: from a file, or from letslogic.com.
+    Returns 'file', 'letslogic', or None."""
+    return message_dialog(
+        surface, viewport, 'Load Level Pack',
+        ['How would you like to add a level pack?'],
+        buttons=('From file…', 'letslogic.com…', 'Cancel'),
+    )
+
+
+def letslogic_browse_dialog(surface, viewport, api_key):
+    """Fetch the user's letslogic collections, let them pick one. Returns
+    (collection_id, collection_name) or None."""
+    # Show a 'fetching' frame while the request is in flight
+    snapshot = surface.copy()
+    surface.blit(snapshot, (0, 0))
+    dim_under(surface)
+    bf = font('arial', 11, bold=True)
+    rect = dialog_rect(280, 80)
+    ui._draw_dialog_frame(surface, rect, 'letslogic.com')
+    msg = bf.render('Fetching collections…', True, TEXT)
+    surface.blit(msg, (rect.x + (rect.w - msg.get_width()) // 2,
+                       rect.y + 30))
+    viewport.present(surface)
+
+    try:
+        collections = letslogic.list_collections(api_key)
+    except letslogic.APIError as e:
+        message_dialog(surface, viewport, 'letslogic.com',
+                       ['Could not reach letslogic.com:', str(e)])
+        return None
+    if not collections:
+        message_dialog(surface, viewport, 'letslogic.com',
+                       ['No collections returned.',
+                        'Check your API key on letslogic.com.'])
+        return None
+
+    fnt = font('consolas', 11, bold=True)
+    line_h = fnt.get_linesize()
+    rect = dialog_rect(360, 320)
+    list_rect = pygame.Rect(rect.x + 12, rect.y + 24, rect.w - 24, rect.h - 60)
+    ok = pygame.Rect(rect.right - 140, rect.bottom - BTN_H - 8, 60, BTN_H)
+    cancel = pygame.Rect(rect.right - 70, rect.bottom - BTN_H - 8, 60, BTN_H)
+
+    selected = 0
+    scroll = 0
+    visible_lines = max(1, list_rect.h // line_h)
+    max_scroll = max(0, len(collections) - visible_lines)
+    snapshot = surface.copy()
+    clock = pygame.time.Clock()
+
+    def row_at(my):
+        rel = my - list_rect.y - 4
+        if rel < 0:
+            return -1
+        idx = scroll + rel // line_h
+        return idx if 0 <= idx < len(collections) else -1
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            _handle_resize_event(event)
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                if event.key == pygame.K_RETURN:
+                    c = collections[selected]
+                    return (c['id'], c['name'])
+                if event.key == pygame.K_DOWN:
+                    selected = min(selected + 1, len(collections) - 1)
+                    if selected >= scroll + visible_lines:
+                        scroll = min(max_scroll, scroll + 1)
+                if event.key == pygame.K_UP:
+                    selected = max(selected - 1, 0)
+                    if selected < scroll:
+                        scroll = max(0, scroll - 1)
+                if event.key == pygame.K_PAGEDOWN:
+                    selected = min(len(collections) - 1, selected + visible_lines)
+                    scroll = min(max_scroll, scroll + visible_lines)
+                if event.key == pygame.K_PAGEUP:
+                    selected = max(0, selected - visible_lines)
+                    scroll = max(0, scroll - visible_lines)
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = viewport.to_logical(event.pos)
+                if event.button == 1:
+                    if cancel.collidepoint(mx, my):
+                        return None
+                    if ok.collidepoint(mx, my):
+                        c = collections[selected]
+                        return (c['id'], c['name'])
+                    idx = row_at(my)
+                    if idx >= 0:
+                        if idx == selected:
+                            c = collections[selected]
+                            return (c['id'], c['name'])
+                        selected = idx
+                if event.button == 4:
+                    scroll = max(0, scroll - 2)
+                if event.button == 5:
+                    scroll = min(max_scroll, scroll + 2)
+
+        surface.blit(snapshot, (0, 0))
+        dim_under(surface)
+        ui._draw_dialog_frame(surface, rect,
+                              f'letslogic.com — {len(collections)} collections')
+        pygame.draw.rect(surface, HILITE, list_rect)
+        bevel_in(surface, list_rect)
+        clip = surface.get_clip()
+        inner = list_rect.inflate(-6, -4)
+        surface.set_clip(inner)
+        y = inner.y - scroll * line_h
+        for i, c in enumerate(collections):
+            label = f'{c["name"]:<28.28}  ({c["level_count"]})'
+            row_r = pygame.Rect(inner.x - 4, y - 1, inner.w + 8, line_h)
+            if i == selected:
+                pygame.draw.rect(surface, (88, 124, 176), row_r)
+                col = (255, 255, 255)
+            else:
+                col = TEXT
+            ts = fnt.render(label, True, col)
+            surface.blit(ts, (inner.x, y))
+            y += line_h
+        surface.set_clip(clip)
+        for r, lbl in [(ok, 'Download'), (cancel, 'Cancel')]:
+            pygame.draw.rect(surface, BG, r)
+            bevel_out(surface, r)
+            pygame.draw.rect(surface, SHADOW, r, 1)
+            ts = font('arial', 11, bold=True).render(lbl, True, TEXT)
+            surface.blit(ts, (r.x + (r.w - ts.get_width()) // 2,
+                              r.y + (r.h - ts.get_height()) // 2))
         viewport.present(surface)
         clock.tick(60)
 
@@ -540,22 +825,42 @@ def main():
 
     # Build button widgets
     btns = {
-        'new':     ui.Button('New',         panel_rects['new'],     'new',     pygame.K_n),
-        'undo':    ui.Button('Undo',        panel_rects['undo'],    'undo',    pygame.K_u),
-        'setlvl':  ui.Button('Set Level',   panel_rects['setlvl'],  'setlvl',  pygame.K_l),
-        'hi':      ui.Button('High Scores', panel_rects['hi'],      'hi',      pygame.K_h),
-        'about':   ui.Button('About',       panel_rects['about'],   'about',   pygame.K_a),
-        'backup':  ui.Button('Backup',      panel_rects['backup'],  'backup',  pygame.K_b),
-        'restore': ui.Button('Restore',     panel_rects['restore'], 'restore', pygame.K_r),
-        'fx_on':   ui.Button('Sound FX ON', panel_rects['fx_on'],   'fx_on',   None),
-        'fx_off':  ui.Button('Sound FX OFF',panel_rects['fx_off'],  'fx_off',  None),
-        'name':    ui.Button('Name',        row_rects['name'],      'name',    None),
-        'load':    ui.Button('Load',        row_rects['load'],      'load',    None),
-        'save':    ui.Button('Save',        row_rects['save'],      'save',    pygame.K_s),
+        'new':      ui.Button('New',          panel_rects['new'],      'new',      pygame.K_n),
+        'undo':     ui.Button('Undo',         panel_rects['undo'],     'undo',     pygame.K_u),
+        'setlvl':   ui.Button('Set Level',    panel_rects['setlvl'],   'setlvl',   pygame.K_l),
+        'hi':       ui.Button('High Scores',  panel_rects['hi'],       'hi',       pygame.K_h),
+        'about':    ui.Button('About',        panel_rects['about'],    'about',    pygame.K_a),
+        'backup':   ui.Button('Backup',       panel_rects['backup'],   'backup',   pygame.K_b),
+        'restore':  ui.Button('Restore',      panel_rects['restore'],  'restore',  pygame.K_r),
+        'loadpack': ui.Button('Load Level Pack', panel_rects['loadpack'], 'loadpack', None),
+        'nowplay':  ui.Button('Now Playing',  panel_rects['nowplay'],  'nowplay',  None),
+        'fx_on':    ui.Button('Sound FX ON',  panel_rects['fx_on'],    'fx_on',    None),
+        'fx_off':   ui.Button('Sound FX OFF', panel_rects['fx_off'],   'fx_off',   None),
+        'name':     ui.Button('Name',         row_rects['name'],       'name',     None),
+        'load':     ui.Button('Load',         row_rects['load'],       'load',     None),
+        'save':     ui.Button('Save',         row_rects['save'],       'save',     pygame.K_s),
     }
     field = ui.TextField(row_rects['field'], app.save_filename)
 
     bf = font('arial', 11, bold=True)
+
+    def _fit(label, max_w):
+        """Truncate `label` with ellipsis to fit max_w pixels in `bf`."""
+        if bf.size(label)[0] <= max_w:
+            return label
+        # binary-trim until it fits
+        while len(label) > 4 and bf.size(label + '…')[0] > max_w:
+            label = label[:-1]
+        return label + '…'
+
+    def _refresh_nowplay_label():
+        """Compose 'Now Playing: <pack>' with truncation that fits the
+        button width."""
+        max_w = btns['nowplay'].rect.w - 8
+        btns['nowplay'].label = _fit(f'Now Playing: {app.current_pack.name}',
+                                     max_w)
+
+    _refresh_nowplay_label()
 
     clock = pygame.time.Clock()
     running = True
@@ -576,15 +881,18 @@ def main():
         elif action == 'undo':
             st.undo()
         elif action == 'setlvl':
-            v = input_dialog(surface, viewport, 'Set Level',
-                             f'Level (1-{NUM_LEVELS}):', str(st.level))
+            v = input_dialog(
+                surface, viewport, 'Set Level',
+                f'Level (1-{app.current_pack.level_count}):',
+                str(st.level))
             if v is not None:
                 try:
                     app.load_level(int(v))
                 except ValueError:
                     pass
         elif action == 'hi':
-            high_scores_dialog(surface, viewport, app.scores)
+            high_scores_dialog(surface, viewport, app.scores,
+                               app.current_pack)
         elif action == 'about':
             message_dialog(surface, viewport, 'About',
                            [f'WSokoban {VERSION}',
@@ -593,7 +901,8 @@ def main():
                             'Inspired by the Amiga port by',
                             'Panagiotis Christias (1993).',
                             '',
-                            'Public domain. 91 levels.'])
+                            f'Now playing: {app.current_pack.name}',
+                            f'({app.current_pack.level_count} levels)'])
         elif action == 'backup':
             app.backup = st.snapshot()
         elif action == 'restore':
@@ -603,6 +912,10 @@ def main():
             app.set_sound(True)
         elif action == 'fx_off':
             app.set_sound(False)
+        elif action == 'loadpack':
+            _handle_load_pack()
+        elif action == 'nowplay':
+            _handle_switch_pack()
         elif action == 'name':
             v = input_dialog(surface, viewport, 'Save File',
                              'Filename:', field.value)
@@ -612,7 +925,7 @@ def main():
         elif action == 'save':
             app.save_filename = field.value or DEFAULT_SAVE_NAME
             path = safe_save_path(app.save_filename)
-            save_game(st, path)
+            save_game(st, path, app.current_pack.name)
             message_dialog(surface, viewport, 'Saved',
                            [f'Saved to {path.name}.'])
         elif action == 'load':
@@ -623,12 +936,106 @@ def main():
                 message_dialog(surface, viewport, 'Load',
                                [f'Could not read {path.name}.'])
             else:
+                # Switch to the pack the save was made in, if installed
+                pack_name = snap.get('pack', ORIGINAL_PACK)
+                target = packs.find_pack(app.packs, pack_name)
+                if target is None:
+                    message_dialog(
+                        surface, viewport, 'Load',
+                        [f'Save was for pack "{pack_name}", which is',
+                         'not installed. Cannot load.'])
+                    return
+                if target.name != app.current_pack.name:
+                    app.set_current_pack(target)
+                    _refresh_nowplay_label()
                 try:
                     app.load_level(snap['level'])
                     _apply_snapshot(app.state, snap)
                 except (KeyError, ValueError, TypeError):
                     message_dialog(surface, viewport, 'Load',
                                    ['Save file is corrupt.'])
+
+    def _handle_switch_pack():
+        choice = pick_pack_dialog(surface, viewport, app.packs,
+                                  app.current_pack.name)
+        if choice and choice != app.current_pack.name:
+            target = packs.find_pack(app.packs, choice)
+            if target:
+                app.set_current_pack(target)
+                _refresh_nowplay_label()
+
+    def _handle_load_pack():
+        kind = load_pack_dialog(surface, viewport)
+        if kind == 'From file…':
+            path = filepicker.pick_file(
+                'Select Sokoban level pack',
+                filepicker.SOKOBAN_FILTERS)
+            if not path:
+                return
+            try:
+                pack = packs.import_sok_file(Path(path), USER_PACKS_DIR)
+            except (ValueError, OSError) as e:
+                message_dialog(surface, viewport, 'Import failed',
+                               [f'Could not import file:', str(e)])
+                return
+            message_dialog(
+                surface, viewport, 'Imported',
+                [f'Imported {pack.level_count} levels',
+                 f'as pack "{pack.name}".',
+                 '',
+                 'Switching to it now.'])
+            app.refresh_packs(prefer_name=pack.name)
+            _refresh_nowplay_label()
+        elif kind == 'letslogic.com…':
+            api_key = app.settings.get('letslogic_api_key', '')
+            if not api_key:
+                key = input_dialog(
+                    surface, viewport, 'letslogic.com API key',
+                    'Paste your API key (Member Preferences):', '')
+                if not key:
+                    return
+                api_key = key.strip()
+                app.settings['letslogic_api_key'] = api_key
+                save_settings(app.settings)
+            picked = letslogic_browse_dialog(surface, viewport, api_key)
+            if not picked:
+                return
+            cid, cname = picked
+            # Show fetching frame
+            snap2 = surface.copy()
+            surface.blit(snap2, (0, 0))
+            dim_under(surface)
+            r2 = dialog_rect(280, 80)
+            ui._draw_dialog_frame(surface, r2, 'Downloading')
+            ts = bf.render(f'Fetching "{cname}"…', True, TEXT)
+            surface.blit(ts, (r2.x + (r2.w - ts.get_width()) // 2,
+                              r2.y + 30))
+            viewport.present(surface)
+            try:
+                _, levels = letslogic.fetch_collection(api_key, cid)
+            except letslogic.APIError as e:
+                message_dialog(surface, viewport, 'Download failed',
+                               [str(e)])
+                return
+            if not levels:
+                message_dialog(surface, viewport, 'Download failed',
+                               ['Collection had no levels.'])
+                return
+            try:
+                pack = packs.install_pack_from_levels(
+                    USER_PACKS_DIR, cname, levels,
+                    source='letslogic')
+            except OSError as e:
+                message_dialog(surface, viewport, 'Install failed', [str(e)])
+                return
+            message_dialog(
+                surface, viewport, 'Installed',
+                [f'Installed {pack.level_count} levels',
+                 f'as pack "{pack.name}".',
+                 '',
+                 'Switching to it now.'])
+            app.refresh_packs(prefer_name=pack.name)
+            _refresh_nowplay_label()
 
     while running:
         for event in pygame.event.get():
@@ -692,7 +1099,7 @@ def main():
         # Win check (after handling input)
         if app.state.is_solved():
             clean = not app.state.used_undo
-            record_score(app.scores, app.state.level,
+            record_score(app.scores, app.current_pack.name, app.state.level,
                          app.state.moves, app.state.pushes, clean)
             # Confetti burst from the player's tile, then the dialog.
             # Re-draw everything once so the snapshot the animation uses is
@@ -700,7 +1107,8 @@ def main():
             ui.draw_window_chrome(surface)
             ui.draw_playfield(surface, app.state, sp)
             for key in ('new', 'undo', 'setlvl', 'hi', 'about',
-                        'backup', 'restore', 'fx_on', 'fx_off'):
+                        'backup', 'restore', 'loadpack', 'nowplay',
+                        'fx_on', 'fx_off'):
                 btns[key].draw(surface, bf)
             ui.draw_stats_panel(surface, panel_rects['stats'], [
                 f'Level   {app.state.level:02d}',
@@ -735,7 +1143,8 @@ def main():
 
         # Right panel
         for key in ('new', 'undo', 'setlvl', 'hi', 'about',
-                    'backup', 'restore', 'fx_on', 'fx_off'):
+                    'backup', 'restore', 'loadpack', 'nowplay',
+                    'fx_on', 'fx_off'):
             btns[key].draw(surface, bf)
 
         # Stats panel
@@ -758,7 +1167,8 @@ def main():
         clock.tick(60)
 
     # Auto-save on exit
-    save_game(app.state, safe_save_path(app.save_filename))
+    save_game(app.state, safe_save_path(app.save_filename),
+              app.current_pack.name)
     pygame.quit()
 
 
