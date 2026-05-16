@@ -65,7 +65,12 @@ def list_collections(api_key: str) -> list[dict]:
 
 def fetch_collection(api_key: str, collection_id: str
                      ) -> tuple[str, list[list[str]]]:
-    """Return (collection_name, [level_grid_lines]) for one collection."""
+    """Return (collection_name, [level_grid_lines]) for one collection.
+
+    letslogic.com returns each level as {id, width, height, title, author,
+    map, ...} where `map` is a flat width*height string of digits 0-7.
+    We translate it back into the standard Sokoban character set.
+    """
     raw = _post(f'{BASE}/collection/{collection_id}', {'key': api_key})
     if isinstance(raw, list):
         items = raw
@@ -79,16 +84,48 @@ def fetch_collection(api_key: str, collection_id: str
     for lv in items:
         if not isinstance(lv, dict):
             continue
-        data = (lv.get('level_data') or lv.get('data')
-                or lv.get('lines') or lv.get('grid')
-                or lv.get('level') or '')
-        if isinstance(data, list):
-            grid = [str(line) for line in data]
+        # Preferred shape: digit-encoded `map` + width/height
+        m = lv.get('map')
+        w = lv.get('width')
+        h = lv.get('height')
+        if isinstance(m, str) and isinstance(w, int) and isinstance(h, int):
+            grid = _decode_map(m, w, h)
         else:
-            grid = str(data).splitlines()
-        # Trim trailing blank rows; keep interior intact
+            # Fallback for any shape we haven't seen — try common field names
+            data = (lv.get('level_data') or lv.get('data')
+                    or lv.get('lines') or lv.get('grid')
+                    or lv.get('level') or m or '')
+            if isinstance(data, list):
+                grid = [str(line) for line in data]
+            else:
+                grid = str(data).splitlines()
         while grid and not grid[-1].strip():
             grid.pop()
         if grid:
             levels.append(grid)
     return name, levels
+
+
+# letslogic's digit-encoded tile types → standard Sokoban charset
+_TILE = {
+    '0': ' ',  # floor
+    '1': '#',  # wall
+    '2': '@',  # player
+    '3': '.',  # goal
+    '4': '$',  # box
+    '5': '*',  # box on goal
+    '6': '+',  # player on goal
+    '7': ' ',  # outside the walls
+}
+
+
+def _decode_map(map_str: str, width: int, height: int) -> list[str]:
+    """Translate a flat width*height digit string into a list of grid rows
+    using the standard Sokoban characters."""
+    rows: list[str] = []
+    for r in range(height):
+        chunk = map_str[r * width:(r + 1) * width]
+        if len(chunk) < width:
+            chunk = chunk.ljust(width)
+        rows.append(''.join(_TILE.get(c, ' ') for c in chunk))
+    return rows
