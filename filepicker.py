@@ -86,6 +86,7 @@ def pick_file(title: str = 'Open file',
 
 
 SOKOBAN_FILTERS = [
-    ('Sokoban level packs (*.sok;*.xsb;*.txt)', '*.sok;*.xsb;*.txt'),
+    ('Sokoban level packs (*.sok;*.xsb;*.slc;*.txt)',
+     '*.sok;*.xsb;*.slc;*.txt'),
     ('All files (*.*)', '*.*'),
 ]

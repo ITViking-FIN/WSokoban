@@ -3,7 +3,12 @@
 The endpoints are POST with a form-encoded `key=<api_key>` body and
 return JSON. The response schema isn't formally documented; this client
 probes a handful of common field names so it tolerates minor variation.
-If letslogic changes their schema, this is the file to update.
+
+Level data comes back digit-encoded (each tile is a character 0-7 in
+a flat width*height string). The decode itself lives in `packs.py`
+(`decode_flat_map` + `LETSLOGIC_TILES`) so any future source that uses
+a similar shape can reuse it. If letslogic changes their schema, this
+is the file to update.
 """
 from __future__ import annotations
 
@@ -11,6 +16,8 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import packs
 
 BASE = 'https://letslogic.com/api/v1'
 DEFAULT_TIMEOUT = 30.0
@@ -89,7 +96,7 @@ def fetch_collection(api_key: str, collection_id: str
         w = lv.get('width')
         h = lv.get('height')
         if isinstance(m, str) and isinstance(w, int) and isinstance(h, int):
-            grid = _decode_map(m, w, h)
+            grid = packs.decode_flat_map(m, w, h, packs.LETSLOGIC_TILES)
         else:
             # Fallback for any shape we haven't seen — try common field names
             data = (lv.get('level_data') or lv.get('data')
@@ -104,28 +111,3 @@ def fetch_collection(api_key: str, collection_id: str
         if grid:
             levels.append(grid)
     return name, levels
-
-
-# letslogic's digit-encoded tile types → standard Sokoban charset
-_TILE = {
-    '0': ' ',  # floor
-    '1': '#',  # wall
-    '2': '@',  # player
-    '3': '.',  # goal
-    '4': '$',  # box
-    '5': '*',  # box on goal
-    '6': '+',  # player on goal
-    '7': ' ',  # outside the walls
-}
-
-
-def _decode_map(map_str: str, width: int, height: int) -> list[str]:
-    """Translate a flat width*height digit string into a list of grid rows
-    using the standard Sokoban characters."""
-    rows: list[str] = []
-    for r in range(height):
-        chunk = map_str[r * width:(r + 1) * width]
-        if len(chunk) < width:
-            chunk = chunk.ljust(width)
-        rows.append(''.join(_TILE.get(c, ' ') for c in chunk))
-    return rows

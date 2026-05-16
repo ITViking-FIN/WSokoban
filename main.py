@@ -20,7 +20,7 @@ from sprites import BG, HILITE, SHADOW, TEXT
 from ui import (WIN_W, WIN_H, PLAY_RECT, PANEL_RECT, ROW_RECT, TILE,
                 BTN_H, font, bevel_in, bevel_out, Viewport)
 
-VERSION = '1.1.1'
+VERSION = '1.1.2'
 
 # ---- Paths ---------------------------------------------------------------
 def _resource_root():
@@ -973,7 +973,7 @@ def main():
             if not path:
                 return
             try:
-                pack = packs.import_sok_file(Path(path), USER_PACKS_DIR)
+                pack = packs.import_collection_file(Path(path), USER_PACKS_DIR)
             except (ValueError, OSError) as e:
                 message_dialog(surface, viewport, 'Import failed',
                                [f'Could not import file:', str(e)])

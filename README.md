@@ -44,9 +44,10 @@ Beyond the bundled "Original" 91 levels, you can install any number of
 extra level collections.
 
 - **Load Level Pack** button — two ways to add packs:
-  - **From file…** — open any `.sok` / `.xsb` / `.txt` Sokoban level
-    file (sokobano.de, github.com, ksokoban, etc.). Multi-level files
-    are parsed automatically and level titles preserved.
+  - **From file…** — open a `.sok` / `.xsb` / `.txt` Sokoban level
+    file or a `.slc` (SokobanYASC XML) collection. Format is
+    auto-detected; multi-level files are split into individual levels
+    and titles preserved.
   - **letslogic.com…** — see the next section for one-time setup.
 - **Now Playing: \<name\>** button — click to switch between any
   installed pack. Set Level, scores, and save state are scoped to the

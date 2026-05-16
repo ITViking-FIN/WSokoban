@@ -1,4 +1,5 @@
-"""Level pack management — discovery, .sok import, per-pack metadata.
+"""Level pack management — discovery, multi-format level import,
+per-pack metadata.
 
 A 'pack' is a directory containing screen.1, screen.2, ... files (each
 the same plain-text Sokoban grid format used by xsokoban) plus an
@@ -8,7 +9,23 @@ Packs live in two places:
   - The built-in 91-level xsokoban set, bundled with the .exe at
     <resource_root>/screens/  — exposed as the 'Original' pack.
   - User-installed packs under <write_root>/packs/<safe_name>/ —
-    populated by import_sok_file() or fetched from letslogic.com.
+    populated by import_collection_file() or fetched from a network
+    source (letslogic.com, ...).
+
+Level data comes in several encodings depending on the source. We
+canonicalise everything into the standard xsokoban character set
+('#', '$', '.', '@', '+', '*', ' ') so the rest of the game only has
+to know about one format. The two helpers that do that translation
+are exposed here so any future source module (letslogic-style API,
+GitHub raw, an HTTP scraper, …) can reuse them:
+
+  - decode_flat_map(map_str, w, h, tile_map): width*height char string
+    in any single-char-per-tile encoding → grid rows. Supplied with a
+    tile map (LETSLOGIC_TILES, etc.) so the same code handles different
+    digit conventions.
+  - parse_collection(text): a text blob from a file or HTTP body. Sniffs
+    for SLC XML, falls back to .sok / .xsb text parsing. Returns
+    (metadata, [(title, rows)]).
 """
 from __future__ import annotations
 
@@ -19,6 +36,17 @@ from pathlib import Path
 
 ORIGINAL_PACK = 'Original'
 SOKOBAN_CHARS = set('#$.@+* \t')
+
+# Tile mappings for digit-encoded level data. Add new entries here when
+# another source uses a different convention.
+#
+# letslogic.com / Sokoban Online: 0=floor, 1=wall, 2=player, 3=goal,
+#                                  4=box, 5=box-on-goal, 6=player-on-goal,
+#                                  7=outside (treat as floor).
+LETSLOGIC_TILES = {
+    '0': ' ', '1': '#', '2': '@', '3': '.',
+    '4': '$', '5': '*', '6': '+', '7': ' ',
+}
 
 _SAFE_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -83,12 +111,13 @@ def screen_path(pack: PackInfo, level_num: int) -> Path:
     return pack.dir / f'screen.{level_num}'
 
 
-def import_sok_file(src_path: Path, user_dir: Path,
-                    fallback_name: str = '') -> PackInfo:
-    """Parse a .sok / .xsb / .txt file and write each level out as
-    screen.N inside <user_dir>/<pack_name>/. Returns the PackInfo."""
+def import_collection_file(src_path: Path, user_dir: Path,
+                           fallback_name: str = '') -> PackInfo:
+    """Read a level-collection file (.sok / .xsb / .txt / .slc) and
+    write each level out as screen.N inside <user_dir>/<pack_name>/.
+    Format is auto-detected. Returns the PackInfo."""
     text = Path(src_path).read_text(encoding='latin-1', errors='replace')
-    metadata, levels = parse_sok(text)
+    metadata, levels = parse_collection(text)
     if not levels:
         raise ValueError('No Sokoban levels found in file.')
 
@@ -101,6 +130,10 @@ def import_sok_file(src_path: Path, user_dir: Path,
                        levels=[lines for _, lines in levels],
                        author=metadata.get('author', ''),
                        source='imported')
+
+
+# Old name kept as an alias so external callers still work
+import_sok_file = import_collection_file
 
 
 def install_pack_from_levels(user_dir: Path, name: str,
@@ -152,6 +185,39 @@ def _write_pack(user_dir: Path, name: str, levels: list[list[str]],
     return PackInfo(name=target.name, dir=target,
                     level_count=len(levels),
                     author=author, source=source)
+
+
+def decode_flat_map(map_str: str, width: int, height: int,
+                    tile_map: dict[str, str] = LETSLOGIC_TILES) -> list[str]:
+    """Decode a width*height single-char-per-tile string into a list of
+    grid rows of standard Sokoban characters. `tile_map` says how each
+    source character translates; defaults to the letslogic convention."""
+    rows: list[str] = []
+    for r in range(height):
+        chunk = map_str[r * width:(r + 1) * width]
+        if len(chunk) < width:
+            chunk = chunk.ljust(width)
+        rows.append(''.join(tile_map.get(c, ' ') for c in chunk))
+    return rows
+
+
+def parse_collection(text: str
+                     ) -> tuple[dict, list[tuple[str, list[str]]]]:
+    """Parse a multi-level collection from a text blob, auto-detecting
+    the format. Returns ({metadata}, [(title, rows)]).
+
+    Recognised:
+      - .slc (SokobanYASC XML) — `<SokobanLevels>...<Level><L>row</L>...`
+      - .sok / .xsb / .txt — plain text with optional 'Key: value' header,
+        ';'-prefixed titles, blank-line-separated levels.
+
+    Add a new branch above the .sok fallback when a future format
+    needs handling.
+    """
+    head = text.lstrip()[:200].lower()
+    if head.startswith('<?xml') or '<sokobanlevels' in head or '<levelcollection' in head:
+        return _parse_slc(text)
+    return parse_sok(text)
 
 
 def parse_sok(text: str) -> tuple[dict, list[tuple[str, list[str]]]]:
@@ -211,3 +277,60 @@ def _is_map_line(line: str) -> bool:
     if not line.strip():
         return False
     return all(c in SOKOBAN_CHARS for c in line)
+
+
+# ---- SLC (SokobanYASC XML) -----------------------------------------------
+_LEVEL_RE   = re.compile(r'<Level\b([^>]*)>(.*?)</Level>',
+                         re.DOTALL | re.IGNORECASE)
+_LINE_RE    = re.compile(r'<L\b[^>]*>(.*?)</L>',
+                         re.DOTALL | re.IGNORECASE)
+_ATTR_ID    = re.compile(r'Id\s*=\s*"([^"]*)"', re.IGNORECASE)
+_COLL_TITLE = re.compile(r'<Title>(.*?)</Title>', re.DOTALL | re.IGNORECASE)
+_AUTHOR     = re.compile(r'<(?:Author|Email)>(.*?)</(?:Author|Email)>',
+                         re.DOTALL | re.IGNORECASE)
+
+
+def _xml_unescape(text: str) -> str:
+    return (text.replace('&lt;', '<').replace('&gt;', '>')
+                .replace('&quot;', '"').replace('&apos;', "'")
+                .replace('&amp;', '&'))
+
+
+def _parse_slc(text: str
+               ) -> tuple[dict, list[tuple[str, list[str]]]]:
+    """Tiny SLC (SokobanYASC) parser. Regex-based so it doesn't pull
+    the `xml` stdlib package into the PyInstaller bundle. Handles the
+    common shape:
+        <SokobanLevels>
+          <Title>...</Title>
+          <LevelCollection>
+            <Level Id="...">
+              <L>map row</L>
+              ...
+            </Level>
+            ...
+    """
+    metadata: dict = {}
+    m = _COLL_TITLE.search(text)
+    if m:
+        metadata['title'] = _xml_unescape(m.group(1).strip())
+    m = _AUTHOR.search(text)
+    if m:
+        metadata['author'] = _xml_unescape(m.group(1).strip())
+
+    levels: list[tuple[str, list[str]]] = []
+    for attrs, body in _LEVEL_RE.findall(text):
+        title = ''
+        id_match = _ATTR_ID.search(attrs)
+        if id_match:
+            title = _xml_unescape(id_match.group(1).strip())
+        if not title:
+            title = f'Level {len(levels) + 1}'
+        rows = [_xml_unescape(row).rstrip()
+                for row in _LINE_RE.findall(body)]
+        # Drop trailing blank rows but keep interior blanks
+        while rows and not rows[-1].strip():
+            rows.pop()
+        if rows:
+            levels.append((title, rows))
+    return metadata, levels
