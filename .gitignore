@@ -35,6 +35,10 @@ WSokoban.data
 WSokoban.scores
 WSokoban.settings
 
+# User-imported level packs — created at runtime, contain third-party
+# level data we shouldn't redistribute.
+packs/
+
 # Scratch from sound tuning — Pixabay reference is not redistributable.
 reference.mp3
 preview_variant_*.wav

@@ -44,6 +44,15 @@ pygame-ce is LGPL v2.1+. The released `.exe` ships the pygame DLLs as
 separate files inside the PyInstaller bundle; they remain replaceable, and
 upstream source is available at the link above.
 
+## User-imported level packs
+
+WSokoban can import additional level collections from local files
+(`.sok`, `.xsb`, `.slc`, `.txt`) and from
+[letslogic.com](https://www.letslogic.com)'s API. The contents of
+those packs are the property of their respective authors / hosts and
+are not redistributed by this project. Bundled with WSokoban only are
+the public-domain xsokoban levels in `screens/`.
+
 ## Build-time tool (not bundled)
 
 - **UPX** (<https://upx.github.io>) — used at build time to compress the
